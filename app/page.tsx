@@ -188,20 +188,21 @@ export default function Home() {
               style={{ imageRendering: 'auto', display: 'block' }}
             />
             <img
-              src={`/textures/${textureSrc}`}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                mixBlendMode: blendMode as any,
-                opacity: opacity / 100,
-                pointerEvents: 'none',
-                transition: 'opacity 0.05s linear'
-              }}
-              alt="Texture overlay"
-            />
+  key={textureSrc} // ✅ Add this line
+  src={`/textures/${textureSrc}`}
+  style={{
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+    mixBlendMode: blendMode as any,
+    opacity: opacity / 100,
+    pointerEvents: 'none',
+    transition: 'opacity 0.05s linear'
+  }}
+  alt="Texture overlay"
+/>
           </div>
         </div>
       )}

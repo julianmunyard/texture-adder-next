@@ -1,103 +1,236 @@
-import Image from "next/image";
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [photo, setPhoto] = useState<HTMLImageElement | null>(null)
+  const [texture, setTexture] = useState<HTMLImageElement | null>(null)
+  const [textureSrc, setTextureSrc] = useState('magazine.jpg')
+  const [blendMode, setBlendMode] = useState('overlay')
+  const [opacity, setOpacity] = useState(100)
+  const [brightness, setBrightness] = useState(100)
+  const [contrast, setContrast] = useState(100)
+  const [saturation, setSaturation] = useState(100)
+  const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const textureOptions = [
+    'magazine.jpg',
+    'vinyl-bleed.jpg',
+    '60s-mustard.jpg',
+    'royal-navy.jpg',
+    'tonor.png',
+    'heavy-grain.png',
+  ]
+
+  const blendOptions = [
+    'overlay',
+    'multiply',
+    'screen',
+    'darken',
+    'lighten',
+    'difference',
+  ]
+
+  useEffect(() => {
+    const tex = new Image()
+    tex.src = `/textures/${textureSrc}`
+    tex.onload = () => setTexture(tex)
+  }, [textureSrc])
+
+  useEffect(() => {
+    draw()
+  }, [photo, texture, blendMode, opacity, brightness, contrast, saturation])
+
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => setPhoto(img)
+      img.src = reader.result as string
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const draw = () => {
+    if (!photo || !texture || !canvasRef.current) return
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = photo.width
+    canvas.height = photo.height
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+    ctx.filter = `
+      brightness(${brightness / 100})
+      contrast(${contrast / 100})
+      saturate(${saturation / 100})
+    `
+    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+
+    ctx.globalAlpha = opacity / 100
+    ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
+    ctx.drawImage(texture, 0, 0, canvas.width, canvas.height)
+
+    ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'source-over'
+    ctx.filter = 'none'
+  }
+
+  const handleDownload = () => {
+    if (!canvasRef.current) return
+    const link = document.createElement('a')
+    link.download = 'blended-image.png'
+    link.href = canvasRef.current.toDataURL('image/png')
+    link.click()
+  }
+
+  const toggleDropdown = (type: 'texture' | 'blend') => {
+    setDropdownOpen(dropdownOpen === type ? null : type)
+  }
+
+  return (
+    <main className="min-h-screen bg-white text-red-700 flex flex-col items-center gap-6 p-4 font-mono">
+      <h1
+        style={{
+          fontFamily: 'Village, monospace',
+          fontSize: '12rem',
+          lineHeight: '1',
+          letterSpacing: '0.05em',
+          animation: 'flicker 0.8s ease-in-out both',
+        }}
+        className="font-bold leading-none text-center"
+      >
+        Texture Adder
+      </h1>
+
+      <div className="flex flex-wrap gap-3 items-center justify-center">
+
+        {/* Upload */}
+<div>
+  <input
+    type="file"
+    id="upload"
+    accept="image/*"
+    onChange={handleUpload}
+    className="hidden"
+  />
+  <label
+    htmlFor="upload"
+    className="cursor-pointer w-[180px] h-[40px] flex items-center justify-center border border-red-600 bg-red-600 hover:bg-red-700 text-white"
+  >
+    Upload Image
+  </label>
+</div>
+
+
+        {/* Texture Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => toggleDropdown('texture')}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            {textureSrc.split('.')[0]}
+            <span>▼</span>
+          </button>
+          {dropdownOpen === 'texture' && (
+            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
+              {textureOptions.map((option) => (
+                <div
+                  key={option}
+                  onClick={() => {
+                    setTextureSrc(option)
+                    setDropdownOpen(null)
+                  }}
+                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+                >
+                  {option.split('.')[0]}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+
+        {/* Blend Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => toggleDropdown('blend')}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
+          >
+            {blendMode}
+            <span>▼</span>
+          </button>
+          {dropdownOpen === 'blend' && (
+            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
+              {blendOptions.map((option) => (
+                <div
+                  key={option}
+                  onClick={() => {
+                    setBlendMode(option)
+                    setDropdownOpen(null)
+                  }}
+                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+                >
+                  {option}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Sliders */}
+      <div className="flex flex-col items-center gap-2 mt-4">
+        <div className="wave-fade" style={{ animationDelay: '0.4s' }}>
+          <label className="flex flex-col items-center">
+            Opacity
+            <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(+e.target.value)} />
+          </label>
+        </div>
+        <div className="wave-fade" style={{ animationDelay: '0.5s' }}>
+          <label className="flex flex-col items-center">
+            Brightness
+            <input type="range" min="0" max="200" value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
+          </label>
+        </div>
+        <div className="wave-fade" style={{ animationDelay: '0.6s' }}>
+          <label className="flex flex-col items-center">
+            Contrast
+            <input type="range" min="0" max="200" value={contrast} onChange={(e) => setContrast(+e.target.value)} />
+          </label>
+        </div>
+        <div className="wave-fade" style={{ animationDelay: '0.7s' }}>
+          <label className="flex flex-col items-center">
+            Saturation
+            <input type="range" min="0" max="200" value={saturation} onChange={(e) => setSaturation(+e.target.value)} />
+          </label>
+        </div>
+      </div>
+
+      {/* Canvas */}
+      {photo && (
+        <div className="mt-4 p-3 border border-neutral-700 bg-neutral-900 inline-block shadow-lg">
+          <canvas
+            ref={canvasRef}
+            className="w-auto h-auto max-w-full max-h-[75vh]"
+            style={{ imageRendering: 'auto' }}
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
+        </div>
+      )}
+
+      {/* Download Button */}
+      <div className="wave-fade" style={{ animationDelay: '0.8s' }}>
+        <button
+          onClick={handleDownload}
+          className="mt-4 px-4 py-2 w-[180px] text-center border border-red-600 bg-red-600 hover:bg-red-700 text-white"
         >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
-  );
+          Download Image
+        </button>
+      </div>
+    </main>
+  )
 }

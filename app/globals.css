@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+/* Font face */
+@font-face {
+  font-family: 'Village';
+  src: url('/fonts/Village-wLn3.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+/* Root theme */
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,6 +21,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* Dark mode */
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
@@ -19,8 +29,100 @@
   }
 }
 
+/* Body styles */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: monospace;
+}
+
+/* Tailwind layers */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Range slider color */
+input[type="range"] {
+  accent-color: #dc2626; /* Tailwind red-600 */
+}
+
+/* Dropdown button styles */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: #dc2626; /* red-600 */
+  border: 1px solid #b91c1c;  /* red-700 */
+  color: white;
+  padding-left: 1rem;
+  padding-right: 2rem;
+  height: 40px;
+  width: 100%;
+  font-family: monospace;
+  border-radius: 4px;
+  cursor: pointer;
+  background-image: none;
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+}
+
+select:hover {
+  background-color: #b91c1c; /* red-700 */
+}
+
+/* Dropdown panel hard override for white background */
+.dropdown-panel {
+  background-color: white !important;
+  background: white !important;
+}
+
+/* Flicker animation */
+@keyframes flicker {
+  0%   { opacity: 0; }
+  3%   { opacity: 0.1; }
+  6%   { opacity: 0; }
+  15%  { opacity: 0.2; }
+  20%  { opacity: 0; }
+  40%  { opacity: 0.4; }
+  45%  { opacity: 0; }
+  55%  { opacity: 0.6; }
+  60%  { opacity: 0.2; }
+  65%  { opacity: 0.7; }
+  68%  { opacity: 0.3; }
+  71%  { opacity: 0.8; }
+  73%  { opacity: 0.4; }
+  76%  { opacity: 1; }
+  78%  { opacity: 0.5; }
+  80%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* Smooth slide + fade animation */
+@keyframes fadeInWave {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.wave-fade {
+  opacity: 0;
+  animation: fadeInWave 0.5s ease-out forwards;
+}
+
+/* Simple fade-in for sliders + button */
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fadeIn {
+  opacity: 0;
+  animation: fadeIn 0.5s ease forwards;
 }

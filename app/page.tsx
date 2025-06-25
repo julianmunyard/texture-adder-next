@@ -14,6 +14,32 @@ export default function Home() {
   const [saturation, setSaturation] = useState(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
+useEffect(() => {
+  const sliders = document.querySelectorAll('input[type="range"]')
+
+  sliders.forEach(slider => {
+    const updateTrack = () => {
+      const min = Number(slider.min)
+      const max = Number(slider.max)
+      const val = Number(slider.value)
+      const percent = ((val - min) / (max - min)) * 100
+      slider.style.setProperty('--percent', `${percent}%`)
+    }
+
+    updateTrack()
+
+    slider.addEventListener('input', updateTrack)
+    slider.addEventListener('change', updateTrack)
+
+    // Cleanup
+    return () => {
+      slider.removeEventListener('input', updateTrack)
+      slider.removeEventListener('change', updateTrack)
+    }
+  })
+}, [opacity, brightness, contrast, saturation])
+
+
   const textureOptions = [
     'magazine.jpg',
     'vinyl-bleed.jpg',
@@ -40,7 +66,7 @@ export default function Home() {
 
   useEffect(() => {
     draw()
-  }, [photo, texture, blendMode, opacity, brightness, contrast, saturation])
+  }, [photo, texture, blendMode, opacity])
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -56,6 +82,7 @@ export default function Home() {
 
   const draw = () => {
     if (!photo || !texture || !canvasRef.current) return
+
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -64,12 +91,6 @@ export default function Home() {
     canvas.height = photo.height
 
     ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    ctx.filter = `
-      brightness(${brightness / 100})
-      contrast(${contrast / 100})
-      saturate(${saturation / 100})
-    `
     ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
 
     ctx.globalAlpha = opacity / 100
@@ -78,19 +99,36 @@ export default function Home() {
 
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
-    ctx.filter = 'none'
   }
 
   const handleDownload = () => {
     if (!canvasRef.current) return
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx || !photo) return
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.filter = `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
+    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+
+    ctx.globalAlpha = opacity / 100
+    ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
+    ctx.drawImage(texture!, 0, 0, canvas.width, canvas.height)
+
     const link = document.createElement('a')
     link.download = 'blended-image.png'
-    link.href = canvasRef.current.toDataURL('image/png')
+    link.href = canvas.toDataURL('image/png')
     link.click()
   }
 
   const toggleDropdown = (type: 'texture' | 'blend') => {
     setDropdownOpen(dropdownOpen === type ? null : type)
+  }
+
+  const getFilterStyle = () => {
+    return {
+      filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
+    }
   }
 
   return (
@@ -109,24 +147,13 @@ export default function Home() {
       </h1>
 
       <div className="flex flex-wrap gap-3 items-center justify-center">
-
         {/* Upload */}
-<div>
-  <input
-    type="file"
-    id="upload"
-    accept="image/*"
-    onChange={handleUpload}
-    className="hidden"
-  />
-  <label
-    htmlFor="upload"
-    className="cursor-pointer w-[180px] h-[40px] flex items-center justify-center border border-red-600 bg-red-600 hover:bg-red-700 text-white"
-  >
-    Upload Image
-  </label>
-</div>
-
+        <div>
+          <input type="file" id="upload" accept="image/*" onChange={handleUpload} className="hidden" />
+          <label htmlFor="upload" className="cursor-pointer w-[180px] h-[40px] flex items-center justify-center border border-red-600 bg-red-600 hover:bg-red-700 text-white">
+            Upload Image
+          </label>
+        </div>
 
         {/* Texture Dropdown */}
         <div className="relative">
@@ -185,40 +212,31 @@ export default function Home() {
 
       {/* Sliders */}
       <div className="flex flex-col items-center gap-2 mt-4">
-        <div className="wave-fade" style={{ animationDelay: '0.4s' }}>
-          <label className="flex flex-col items-center">
-            Opacity
-            <input type="range" min="0" max="100" value={opacity} onChange={(e) => setOpacity(+e.target.value)} />
-          </label>
-        </div>
-        <div className="wave-fade" style={{ animationDelay: '0.5s' }}>
-          <label className="flex flex-col items-center">
-            Brightness
-            <input type="range" min="0" max="200" value={brightness} onChange={(e) => setBrightness(+e.target.value)} />
-          </label>
-        </div>
-        <div className="wave-fade" style={{ animationDelay: '0.6s' }}>
-          <label className="flex flex-col items-center">
-            Contrast
-            <input type="range" min="0" max="200" value={contrast} onChange={(e) => setContrast(+e.target.value)} />
-          </label>
-        </div>
-        <div className="wave-fade" style={{ animationDelay: '0.7s' }}>
-          <label className="flex flex-col items-center">
-            Saturation
-            <input type="range" min="0" max="200" value={saturation} onChange={(e) => setSaturation(+e.target.value)} />
-          </label>
-        </div>
+        {[
+          { label: 'Opacity', value: opacity, setter: setOpacity, max: 100 },
+          { label: 'Brightness', value: brightness, setter: setBrightness, max: 200 },
+          { label: 'Contrast', value: contrast, setter: setContrast, max: 200 },
+          { label: 'Saturation', value: saturation, setter: setSaturation, max: 200 }
+        ].map(({ label, value, setter, max }, i) => (
+          <div key={label} className="wave-fade" style={{ animationDelay: `${0.4 + i * 0.1}s` }}>
+            <label className="flex flex-col items-center">
+              {label}
+              <input type="range" min="0" max={max} value={value} onChange={(e) => setter(+e.target.value)} />
+            </label>
+          </div>
+        ))}
       </div>
 
-      {/* Canvas */}
+      {/* Canvas wrapped in filter div */}
       {photo && (
         <div className="mt-4 p-3 border border-neutral-700 bg-neutral-900 inline-block shadow-lg">
-          <canvas
-            ref={canvasRef}
-            className="w-auto h-auto max-w-full max-h-[75vh]"
-            style={{ imageRendering: 'auto' }}
-          />
+          <div style={getFilterStyle()}>
+            <canvas
+              ref={canvasRef}
+              className="w-auto h-auto max-w-full max-h-[75vh]"
+              style={{ imageRendering: 'auto' }}
+            />
+          </div>
         </div>
       )}
 

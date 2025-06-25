@@ -29,7 +29,6 @@
   }
 }
 
-/* Body styles */
 body {
   background: var(--background);
   color: var(--foreground);
@@ -41,18 +40,94 @@ body {
 @tailwind components;
 @tailwind utilities;
 
-/* Range slider color */
+/* ===================== SLIDERS ===================== */
 input[type="range"] {
-  accent-color: #dc2626; /* Tailwind red-600 */
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: transparent;
+  cursor: pointer;
+  margin-top: 6px;
+  accent-color: #dc2626;
+  position: relative;
 }
 
-/* Dropdown button styles */
+/* Chrome / Safari track */
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(
+    to right,
+    #dc2626 0%,
+    #dc2626 var(--percent, 50%),
+    #e5e7eb var(--percent, 50%),
+    #e5e7eb 100%
+  );
+}
+
+/* Firefox track */
+input[type="range"]::-moz-range-track {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 9999px;
+}
+
+/* Chrome / Safari thumb */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: #dc2626;
+  border: none;
+  margin-top: -5px;
+  position: relative;
+  z-index: 2;
+  transition: background 0.2s ease;
+}
+
+/* Firefox thumb */
+input[type="range"]::-moz-range-thumb {
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: #dc2626;
+  border: none;
+  transition: background 0.2s ease;
+}
+
+input[type="range"]:hover::-webkit-slider-thumb,
+input[type="range"]:hover::-moz-range-thumb {
+  background: #b91c1c;
+}
+
+input[type="range"]:focus {
+  outline: none;
+}
+
+/* =============== CROSS-BROWSER UI STYLES =============== */
+button,
+label[for="upload"] {
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+button:hover,
+label[for="upload"]:hover {
+  background-color: #b91c1c;
+  transform: translateY(-1px);
+}
+
+input[type="file"] {
+  display: none;
+}
+
 select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  background-color: #dc2626; /* red-600 */
-  border: 1px solid #b91c1c;  /* red-700 */
+  background-color: #dc2626;
+  border: 1px solid #b91c1c;
   color: white;
   padding-left: 1rem;
   padding-right: 2rem;
@@ -62,52 +137,41 @@ select {
   border-radius: 4px;
   cursor: pointer;
   background-image: none;
-  background-repeat: no-repeat;
-  background-position: right 0.5rem center;
-  background-size: 1rem;
 }
 
 select:hover {
-  background-color: #b91c1c; /* red-700 */
+  background-color: #b91c1c;
 }
 
-/* Dropdown panel hard override for white background */
 .dropdown-panel {
   background-color: white !important;
   background: white !important;
 }
 
-/* Flicker animation */
+/* =============== ANIMATIONS =============== */
 @keyframes flicker {
-  0%   { opacity: 0; }
-  3%   { opacity: 0.1; }
-  6%   { opacity: 0; }
-  15%  { opacity: 0.2; }
-  20%  { opacity: 0; }
-  40%  { opacity: 0.4; }
-  45%  { opacity: 0; }
-  55%  { opacity: 0.6; }
-  60%  { opacity: 0.2; }
-  65%  { opacity: 0.7; }
-  68%  { opacity: 0.3; }
-  71%  { opacity: 0.8; }
-  73%  { opacity: 0.4; }
-  76%  { opacity: 1; }
-  78%  { opacity: 0.5; }
-  80%  { opacity: 1; }
+  0% { opacity: 0; }
+  3% { opacity: 0.1; }
+  6% { opacity: 0; }
+  15% { opacity: 0.2; }
+  20% { opacity: 0; }
+  40% { opacity: 0.4; }
+  45% { opacity: 0; }
+  55% { opacity: 0.6; }
+  60% { opacity: 0.2; }
+  65% { opacity: 0.7; }
+  68% { opacity: 0.3; }
+  71% { opacity: 0.8; }
+  73% { opacity: 0.4; }
+  76% { opacity: 1; }
+  78% { opacity: 0.5; }
+  80% { opacity: 1; }
   100% { opacity: 1; }
 }
 
-/* Smooth slide + fade animation */
 @keyframes fadeInWave {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .wave-fade {
@@ -115,11 +179,8 @@ select:hover {
   animation: fadeInWave 0.5s ease-out forwards;
 }
 
-/* Simple fade-in for sliders + button */
 @keyframes fadeIn {
-  to {
-    opacity: 1;
-  }
+  to { opacity: 1; }
 }
 
 .animate-fadeIn {

@@ -5,7 +5,6 @@ import { useEffect, useRef, useState } from 'react'
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null)
-  const [texture, setTexture] = useState<HTMLImageElement | null>(null)
   const [textureSrc, setTextureSrc] = useState('magazine.jpg')
   const [blendMode, setBlendMode] = useState('overlay')
   const [opacity, setOpacity] = useState(100)
@@ -13,32 +12,6 @@ export default function Home() {
   const [contrast, setContrast] = useState(100)
   const [saturation, setSaturation] = useState(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
-
-useEffect(() => {
-  const sliders = document.querySelectorAll('input[type="range"]')
-
-  sliders.forEach(slider => {
-    const updateTrack = () => {
-      const min = Number(slider.min)
-      const max = Number(slider.max)
-      const val = Number(slider.value)
-      const percent = ((val - min) / (max - min)) * 100
-      slider.style.setProperty('--percent', `${percent}%`)
-    }
-
-    updateTrack()
-
-    slider.addEventListener('input', updateTrack)
-    slider.addEventListener('change', updateTrack)
-
-    // Cleanup
-    return () => {
-      slider.removeEventListener('input', updateTrack)
-      slider.removeEventListener('change', updateTrack)
-    }
-  })
-}, [opacity, brightness, contrast, saturation])
-
 
   const textureOptions = [
     'magazine.jpg',
@@ -59,14 +32,34 @@ useEffect(() => {
   ]
 
   useEffect(() => {
-    const tex = new Image()
-    tex.src = `/textures/${textureSrc}`
-    tex.onload = () => setTexture(tex)
-  }, [textureSrc])
+    const sliders = document.querySelectorAll('input[type="range"]')
+    sliders.forEach(slider => {
+      const input = slider as HTMLInputElement
+      const updateTrack = () => {
+        const min = Number(input.min)
+        const max = Number(input.max)
+        const val = Number(input.value)
+        const percent = ((val - min) / (max - min)) * 100
+        input.style.setProperty('--percent', `${percent}%`)
+      }
+      updateTrack()
+      input.addEventListener('input', updateTrack)
+      input.addEventListener('change', updateTrack)
+    })
+  }, [])
 
   useEffect(() => {
-    draw()
-  }, [photo, texture, blendMode, opacity])
+    if (!photo || !canvasRef.current) return
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = photo.width
+    canvas.height = photo.height
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+  }, [photo])
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -80,56 +73,42 @@ useEffect(() => {
     reader.readAsDataURL(file)
   }
 
-  const draw = () => {
-    if (!photo || !texture || !canvasRef.current) return
+  const handleDownload = () => {
+    if (!canvasRef.current || !photo) return
 
-    const canvas = canvasRef.current
+    const canvas = document.createElement('canvas')
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    canvas.width = photo.width
-    canvas.height = photo.height
+    const tempTexture = new Image()
+    tempTexture.src = `/textures/${textureSrc}`
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+    tempTexture.onload = () => {
+      canvas.width = photo.width
+      canvas.height = photo.height
 
-    ctx.globalAlpha = opacity / 100
-    ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
-    ctx.drawImage(texture, 0, 0, canvas.width, canvas.height)
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.filter = `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
+      ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
 
-    ctx.globalAlpha = 1
-    ctx.globalCompositeOperation = 'source-over'
-  }
+      ctx.globalAlpha = opacity / 100
+      ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
+      ctx.drawImage(tempTexture, 0, 0, canvas.width, canvas.height)
 
-  const handleDownload = () => {
-    if (!canvasRef.current) return
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx || !photo) return
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.filter = `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
-    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
-
-    ctx.globalAlpha = opacity / 100
-    ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
-    ctx.drawImage(texture!, 0, 0, canvas.width, canvas.height)
-
-    const link = document.createElement('a')
-    link.download = 'blended-image.png'
-    link.href = canvas.toDataURL('image/png')
-    link.click()
+      const link = document.createElement('a')
+      link.download = 'blended-image.png'
+      link.href = canvas.toDataURL('image/png')
+      link.click()
+    }
   }
 
   const toggleDropdown = (type: 'texture' | 'blend') => {
     setDropdownOpen(dropdownOpen === type ? null : type)
   }
 
-  const getFilterStyle = () => {
-    return {
-      filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
-    }
-  }
+  const getFilterStyle = () => ({
+    filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
+  })
 
   return (
     <main className="min-h-screen bg-white text-red-700 flex flex-col items-center gap-6 p-4 font-mono">
@@ -147,70 +126,43 @@ useEffect(() => {
       </h1>
 
       <div className="flex flex-wrap gap-3 items-center justify-center">
-        {/* Upload */}
-        <div>
-          <input type="file" id="upload" accept="image/*" onChange={handleUpload} className="hidden" />
-          <label htmlFor="upload" className="cursor-pointer w-[180px] h-[40px] flex items-center justify-center border border-red-600 bg-red-600 hover:bg-red-700 text-white">
-            Upload Image
-          </label>
-        </div>
+        <label htmlFor="upload" className="cursor-pointer w-[180px] h-[40px] flex items-center justify-center border border-red-600 bg-red-600 hover:bg-red-700 text-white">
+          Upload Image
+        </label>
+        <input type="file" id="upload" accept="image/*" onChange={handleUpload} className="hidden" />
 
-        {/* Texture Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => toggleDropdown('texture')}
-            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
-          >
-            {textureSrc.split('.')[0]}
-            <span>▼</span>
-          </button>
-          {dropdownOpen === 'texture' && (
-            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
-              {textureOptions.map((option) => (
-                <div
-                  key={option}
-                  onClick={() => {
-                    setTextureSrc(option)
-                    setDropdownOpen(null)
-                  }}
-                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
-                >
-                  {option.split('.')[0]}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Blend Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => toggleDropdown('blend')}
-            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
-          >
-            {blendMode}
-            <span>▼</span>
-          </button>
-          {dropdownOpen === 'blend' && (
-            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
-              {blendOptions.map((option) => (
-                <div
-                  key={option}
-                  onClick={() => {
-                    setBlendMode(option)
-                    setDropdownOpen(null)
-                  }}
-                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
-                >
-                  {option}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {[
+          { label: 'Texture', options: textureOptions, value: textureSrc, setter: setTextureSrc },
+          { label: 'Blend', options: blendOptions, value: blendMode, setter: setBlendMode }
+        ].map(({ label, options, value, setter }) => (
+          <div key={label} className="relative">
+            <button
+              onClick={() => toggleDropdown(label.toLowerCase() as 'texture' | 'blend')}
+              className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
+            >
+              {value.split('.')[0]}
+              <span>▼</span>
+            </button>
+            {dropdownOpen === label.toLowerCase() && (
+              <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
+                {options.map((opt) => (
+                  <div
+                    key={opt}
+                    onClick={() => {
+                      setter(opt)
+                      setDropdownOpen(null)
+                    }}
+                    className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+                  >
+                    {opt.split('.')[0]}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
-      {/* Sliders */}
       <div className="flex flex-col items-center gap-2 mt-4">
         {[
           { label: 'Opacity', value: opacity, setter: setOpacity, max: 100 },
@@ -227,20 +179,33 @@ useEffect(() => {
         ))}
       </div>
 
-      {/* Canvas wrapped in filter div */}
       {photo && (
         <div className="mt-4 p-3 border border-neutral-700 bg-neutral-900 inline-block shadow-lg">
-          <div style={getFilterStyle()}>
+          <div className="relative" style={getFilterStyle()}>
             <canvas
               ref={canvasRef}
               className="w-auto h-auto max-w-full max-h-[75vh]"
-              style={{ imageRendering: 'auto' }}
+              style={{ imageRendering: 'auto', display: 'block' }}
+            />
+            <img
+              src={`/textures/${textureSrc}`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                mixBlendMode: blendMode as any,
+                opacity: opacity / 100,
+                pointerEvents: 'none',
+                transition: 'opacity 0.05s linear'
+              }}
+              alt="Texture overlay"
             />
           </div>
         </div>
       )}
 
-      {/* Download Button */}
       <div className="wave-fade" style={{ animationDelay: '0.8s' }}>
         <button
           onClick={handleDownload}

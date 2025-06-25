@@ -196,7 +196,7 @@ export default function Home() {
     left: 0,
     width: '100%',
     height: '100%',
-    mixBlendMode: blendMode as any,
+    mixBlendMode: blendMode as React.CSSProperties['mixBlendMode'],
     opacity: opacity / 100,
     pointerEvents: 'none',
     transition: 'opacity 0.05s linear'

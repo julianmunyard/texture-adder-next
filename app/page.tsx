@@ -71,12 +71,13 @@ async function shareOrSave(blob: Blob) {
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null)
-  const [textureSrc, setTextureSrc] = useState('magazine.jpg')
+
+  const [textureSrc, setTextureSrc] = useState<string>('magazine.jpg')
   const [blendMode, setBlendMode] = useState<GlobalCompositeOperation>('overlay')
-  const [opacity, setOpacity] = useState(100)
-  const [brightness, setBrightness] = useState(100)
-  const [contrast, setContrast] = useState(100)
-  const [saturation, setSaturation] = useState(100)
+  const [opacity, setOpacity] = useState<number>(100)
+  const [brightness, setBrightness] = useState<number>(100)
+  const [contrast, setContrast] = useState<number>(100)
+  const [saturation, setSaturation] = useState<number>(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
   // SSR-stable label; update after mount to avoid hydration mismatch
@@ -88,7 +89,7 @@ export default function Home() {
     setCanNativeShare(hasFileShare(navigator, probe))
   }, [])
 
-  const textureOptions = [
+  const textureOptions: string[] = [
     'magazine.jpg',
     'vinyl-bleed.jpg',
     '60s-mustard.jpg',
@@ -233,36 +234,59 @@ export default function Home() {
         </label>
         <input type="file" id="upload" accept="image/*" onChange={handleUpload} className="hidden" />
 
-        {[
-          { label: 'Texture', options: textureOptions, value: textureSrc, setter: setTextureSrc },
-          { label: 'Blend', options: blendOptions, value: blendMode, setter: setBlendMode }
-        ].map(({ label, options, value, setter }) => (
-          <div key={label} className="relative">
-            <button
-              onClick={() => toggleDropdown(label.toLowerCase() as 'texture' | 'blend')}
-              className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
-            >
-              {value.split('.')[0]}
-              <span>▼</span>
-            </button>
-            {dropdownOpen === label.toLowerCase() && (
-              <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
-                {options.map((opt) => (
-                  <div
-                    key={opt}
-                    onClick={() => {
-                      setter(opt as any) // sets string or GlobalCompositeOperation; see mapping below
-                      setDropdownOpen(null)
-                    }}
-                    className="px-4 py-2 hover:bg-red-100 cursor-pointer"
-                  >
-                    {opt.split('.')[0]}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+        {/* --- Texture dropdown (string) --- */}
+        <div className="relative">
+          <button
+            onClick={() => toggleDropdown('texture')}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
+          >
+            {textureSrc.split('.')[0]}
+            <span>▼</span>
+          </button>
+          {dropdownOpen === 'texture' && (
+            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
+              {textureOptions.map((opt) => (
+                <div
+                  key={opt}
+                  onClick={() => {
+                    setTextureSrc(opt)
+                    setDropdownOpen(null)
+                  }}
+                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+                >
+                  {opt.split('.')[0]}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* --- Blend dropdown (GlobalCompositeOperation) --- */}
+        <div className="relative">
+          <button
+            onClick={() => toggleDropdown('blend')}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-red-600 text-white border border-red-700 font-mono"
+          >
+            {blendMode}
+            <span>▼</span>
+          </button>
+          {dropdownOpen === 'blend' && (
+            <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
+              {blendOptions.map((opt) => (
+                <div
+                  key={opt}
+                  onClick={() => {
+                    setBlendMode(opt)
+                    setDropdownOpen(null)
+                  }}
+                  className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+                >
+                  {opt}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-col items-center gap-2 mt-4">

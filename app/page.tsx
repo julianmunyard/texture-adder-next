@@ -2,6 +2,56 @@
 
 import { useEffect, useRef, useState } from 'react'
 
+// ---------- helper: promise-based image loader (avoids tainted canvas) ----------
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous' // safe if you ever serve textures from a CDN
+    img.onload = () => resolve(img)
+    img.onerror = reject
+    img.src = src
+  })
+}
+
+// ---------- helper: share to mobile Photos via native share sheet or fallbacks ----------
+async function shareOrSave(blob: Blob) {
+  const file = new File([blob], 'blended-image.png', { type: 'image/png' })
+  const nav = navigator as any
+
+  // Try native share sheet with file
+  try {
+    if (nav?.canShare && nav.canShare({ files: [file] })) {
+      await nav.share({
+        files: [file],
+        title: 'Blended Image',
+        text: 'Exported from Texture Adder',
+      })
+      return
+    }
+  } catch {
+    // ignore and fall through to fallbacks
+  }
+
+  // Fallbacks
+  const url = URL.createObjectURL(blob)
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+
+  if (isIOS) {
+    // Open in a new tab so the user can long-press → “Add to Photos”
+    window.open(url, '_blank')
+  } else {
+    // Standard download
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'blended-image.png'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
+
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
+
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null)
@@ -12,6 +62,14 @@ export default function Home() {
   const [contrast, setContrast] = useState(100)
   const [saturation, setSaturation] = useState(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
+
+  // 🔒 SSR-stable initial label; update after mount to avoid hydration mismatch
+  const [canNativeShare, setCanNativeShare] = useState(false)
+
+  useEffect(() => {
+    const nav = navigator as any
+    setCanNativeShare(!!(nav?.canShare && nav.canShare({ files: [new File([], 'x', { type: 'image/png' })] })))
+  }, [])
 
   const textureOptions = [
     'magazine.jpg',
@@ -73,33 +131,59 @@ export default function Home() {
     reader.readAsDataURL(file)
   }
 
-  const handleDownload = () => {
-    if (!canvasRef.current || !photo) return
+  // ---------- export: blend first, then apply filters to the merged result; share/save on mobile ----------
+  const handleDownload = async () => {
+    if (!photo) return
 
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    // Ensure texture is decoded
+    const texture = await loadImage(`/textures/${textureSrc}`)
 
-    const tempTexture = new Image()
-    tempTexture.src = `/textures/${textureSrc}`
+    const dpr = window.devicePixelRatio || 1
+    const W = photo.width
+    const H = photo.height
 
-    tempTexture.onload = () => {
-      canvas.width = photo.width
-      canvas.height = photo.height
+    // Pass 1: composite photo + texture onto an offscreen canvas (no filters yet)
+    const compCanvas = document.createElement('canvas')
+    compCanvas.width = Math.round(W * dpr)
+    compCanvas.height = Math.round(H * dpr)
+    const compCtx = compCanvas.getContext('2d')
+    if (!compCtx) return
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
-      ctx.filter = `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
-      ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+    compCtx.save()
+    compCtx.scale(dpr, dpr)
+    compCtx.clearRect(0, 0, W, H)
 
-      ctx.globalAlpha = opacity / 100
-      ctx.globalCompositeOperation = blendMode as GlobalCompositeOperation
-      ctx.drawImage(tempTexture, 0, 0, canvas.width, canvas.height)
+    // base photo
+    compCtx.globalCompositeOperation = 'source-over'
+    compCtx.globalAlpha = 1
+    compCtx.drawImage(photo, 0, 0, W, H)
 
-      const link = document.createElement('a')
-      link.download = 'blended-image.png'
-      link.href = canvas.toDataURL('image/png')
-      link.click()
-    }
+    // texture with chosen blend + opacity
+    compCtx.globalAlpha = opacity / 100
+    compCtx.globalCompositeOperation = (blendMode as GlobalCompositeOperation) || 'overlay'
+    compCtx.drawImage(texture, 0, 0, W, H)
+    compCtx.restore()
+
+    // Pass 2: apply filters to the merged output (matches your on-screen CSS filter)
+    const outCanvas = document.createElement('canvas')
+    outCanvas.width = compCanvas.width
+    outCanvas.height = compCanvas.height
+    const outCtx = outCanvas.getContext('2d')
+    if (!outCtx) return
+
+    const fBrightness = Math.max(0, brightness) / 100
+    const fContrast = Math.max(0, contrast) / 100
+    const fSaturation = Math.max(0, saturation) / 100
+    outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`
+    outCtx.drawImage(compCanvas, 0, 0)
+
+    await new Promise<void>((resolve) => {
+      outCanvas.toBlob(async (blob) => {
+        if (!blob) return resolve()
+        await shareOrSave(blob)
+        resolve()
+      }, 'image/png')
+    })
   }
 
   const toggleDropdown = (type: 'texture' | 'blend') => {
@@ -188,21 +272,21 @@ export default function Home() {
               style={{ imageRendering: 'auto', display: 'block' }}
             />
             <img
-  key={textureSrc} // ✅ Add this line
-  src={`/textures/${textureSrc}`}
-  style={{
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    mixBlendMode: blendMode as React.CSSProperties['mixBlendMode'],
-    opacity: opacity / 100,
-    pointerEvents: 'none',
-    transition: 'opacity 0.05s linear'
-  }}
-  alt="Texture overlay"
-/>
+              key={textureSrc}
+              src={`/textures/${textureSrc}`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                mixBlendMode: blendMode as React.CSSProperties['mixBlendMode'],
+                opacity: opacity / 100,
+                pointerEvents: 'none',
+                transition: 'opacity 0.05s linear'
+              }}
+              alt="Texture overlay"
+            />
           </div>
         </div>
       )}
@@ -212,7 +296,7 @@ export default function Home() {
           onClick={handleDownload}
           className="mt-4 px-4 py-2 w-[180px] text-center border border-red-600 bg-red-600 hover:bg-red-700 text-white"
         >
-          Download Image
+          {canNativeShare ? 'Share / Save Image' : 'Download Image'}
         </button>
       </div>
     </main>

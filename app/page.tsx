@@ -13,7 +13,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
-// ---------- typed navigator helpers (no `any`) ----------
+// ---------- typed navigator helpers ----------
 type ShareDataWithFiles = ShareData & { files?: File[] }
 type ShareNavigator = Navigator & {
   canShare?: (data?: ShareDataWithFiles) => boolean
@@ -30,36 +30,28 @@ function hasFileShare(nav: Navigator, probe?: File): nav is ShareNavigator {
 }
 
 // ---------- helper: share to mobile Photos via native share sheet or fallbacks ----------
-async function shareOrSave(blob: Blob) {
-  const file = new File([blob], 'blended-image.png', { type: 'image/png' })
+async function shareOrSave(blob: Blob, filename: string) {
+  const file = new File([blob], filename, { type: blob.type })
   const nav = navigator as ShareNavigator
 
-  // Try native share sheet with file
   try {
     if (nav.canShare && nav.canShare({ files: [file] }) && nav.share) {
-      await nav.share({
-        files: [file],
-        title: 'Blended Image',
-        text: 'Exported from Texture Adder',
-      })
+      await nav.share({ files: [file], title: 'Blended Image', text: 'Exported from Texture Adder' })
       return
     }
   } catch {
     // ignore and fall through to fallbacks
   }
 
-  // Fallbacks
   const url = URL.createObjectURL(blob)
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
   if (isIOS) {
-    // Open in a new tab so the user can long-press → “Add to Photos”
-    window.open(url, '_blank')
+    window.open(url, '_blank') // long-press → “Add to Photos”
   } else {
-    // Standard download
     const a = document.createElement('a')
     a.href = url
-    a.download = 'blended-image.png'
+    a.download = filename
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -80,11 +72,15 @@ export default function Home() {
   const [saturation, setSaturation] = useState<number>(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
+  // Export knobs to speed up big images
+  const [exportPreset, setExportPreset] = useState<'original' | '4k' | '2k' | '1080p'>('2k')
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpeg' | 'webp'>('webp')
+  const [exportQuality, setExportQuality] = useState<number>(0.92) // for jpeg/webp
+  const [hiDpi, setHiDpi] = useState<boolean>(false) // off by default for speed
+
   // SSR-stable label; update after mount to avoid hydration mismatch
   const [canNativeShare, setCanNativeShare] = useState(false)
-
   useEffect(() => {
-    // Probe file is required by some browsers to validate canShare({ files })
     const probe = new File([], 'probe.png', { type: 'image/png' })
     setCanNativeShare(hasFileShare(navigator, probe))
   }, [])
@@ -149,45 +145,68 @@ export default function Home() {
     reader.readAsDataURL(file)
   }
 
-  // ---------- export: blend first, then apply filters to the merged result; share/save on mobile ----------
+  function maxDimForPreset(preset: typeof exportPreset): number | null {
+    switch (preset) {
+      case '4k': return 3840
+      case '2k': return 2560
+      case '1080p': return 1920
+      default: return null // original
+    }
+  }
+
+  // ---------- export: downscale + optional HiDPI + faster decoding via ImageBitmap ----------
   const handleDownload = async () => {
     if (!photo) return
 
-    // Ensure texture is decoded
-    const texture = await loadImage(`/textures/${textureSrc}`)
+    // Decode texture and upgrade both images to ImageBitmap for faster draw
+    const textureImg = await loadImage(`/textures/${textureSrc}`)
+    const [photoBmp, textureBmp] = await Promise.all([
+      createImageBitmap(photo),
+      createImageBitmap(textureImg),
+    ])
 
-    const dpr = window.devicePixelRatio || 1
-    const W = photo.width
-    const H = photo.height
+    const srcW = photoBmp.width
+    const srcH = photoBmp.height
+    const maxDim = maxDimForPreset(exportPreset)
+    const scale =
+      maxDim ? Math.min(1, maxDim / Math.max(srcW, srcH)) : 1
 
-    // Pass 1: composite photo + texture onto an offscreen canvas (no filters yet)
+    const targetW = Math.max(1, Math.round(srcW * scale))
+    const targetH = Math.max(1, Math.round(srcH * scale))
+    const dpr = hiDpi ? (window.devicePixelRatio || 1) : 1
+
+    // Pass 1: composite (no filters yet)
     const compCanvas = document.createElement('canvas')
-    compCanvas.width = Math.round(W * dpr)
-    compCanvas.height = Math.round(H * dpr)
+    compCanvas.width = Math.round(targetW * dpr)
+    compCanvas.height = Math.round(targetH * dpr)
     const compCtx = compCanvas.getContext('2d')
     if (!compCtx) return
+    compCtx.imageSmoothingEnabled = true
+    compCtx.imageSmoothingQuality = 'high'
 
     compCtx.save()
     compCtx.scale(dpr, dpr)
-    compCtx.clearRect(0, 0, W, H)
+    compCtx.clearRect(0, 0, targetW, targetH)
 
     // base photo
     compCtx.globalCompositeOperation = 'source-over'
     compCtx.globalAlpha = 1
-    compCtx.drawImage(photo, 0, 0, W, H)
+    compCtx.drawImage(photoBmp, 0, 0, targetW, targetH)
 
     // texture with chosen blend + opacity
     compCtx.globalAlpha = opacity / 100
     compCtx.globalCompositeOperation = blendMode
-    compCtx.drawImage(texture, 0, 0, W, H)
+    compCtx.drawImage(textureBmp, 0, 0, targetW, targetH)
     compCtx.restore()
 
-    // Pass 2: apply filters to the merged output (matches your on-screen CSS filter)
+    // Pass 2: apply filters to merged result (matches preview)
     const outCanvas = document.createElement('canvas')
     outCanvas.width = compCanvas.width
     outCanvas.height = compCanvas.height
     const outCtx = outCanvas.getContext('2d')
     if (!outCtx) return
+    outCtx.imageSmoothingEnabled = true
+    outCtx.imageSmoothingQuality = 'high'
 
     const fBrightness = Math.max(0, brightness) / 100
     const fContrast = Math.max(0, contrast) / 100
@@ -195,12 +214,27 @@ export default function Home() {
     outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`
     outCtx.drawImage(compCanvas, 0, 0)
 
+    const mime = exportFormat === 'png'
+      ? 'image/png'
+      : exportFormat === 'jpeg'
+      ? 'image/jpeg'
+      : 'image/webp'
+
+    const filename =
+      exportFormat === 'png' ? 'blended-image.png'
+      : exportFormat === 'jpeg' ? 'blended-image.jpg'
+      : 'blended-image.webp'
+
     await new Promise<void>((resolve) => {
+      // quality only applies to lossy formats
+      const quality = exportFormat === 'png' ? undefined : exportQuality
       outCanvas.toBlob(async (blob) => {
         if (!blob) return resolve()
-        await shareOrSave(blob)
+        // Ensure blob has desired type (some browsers ignore mime in toBlob when filter is active)
+        const fixedBlob = blob.type === mime ? blob : new Blob([blob], { type: mime })
+        await shareOrSave(fixedBlob, filename)
         resolve()
-      }, 'image/png')
+      }, mime, quality)
     })
   }
 
@@ -209,7 +243,6 @@ export default function Home() {
   }
 
   const getFilterStyle = () => ({
-    // This drives the live preview; export now mirrors this order
     filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
   })
 
@@ -287,6 +320,78 @@ export default function Home() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Export controls */}
+      <div className="flex flex-wrap gap-3 items-center justify-center">
+        {/* Size preset */}
+        <div className="relative">
+          <button
+            onClick={() => {}}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-white text-red-700 border border-red-700 font-mono"
+            title="Export size preset"
+          >
+            Size: {exportPreset.toUpperCase()}
+          </button>
+          <div className="mt-2 w-[180px] border border-red-700 bg-white">
+            {(['original','4k','2k','1080p'] as const).map(p => (
+              <div
+                key={p}
+                onClick={() => setExportPreset(p)}
+                className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+              >
+                {p === 'original' ? 'Original' : p.toUpperCase()}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Format */}
+        <div className="relative">
+          <button
+            onClick={() => {}}
+            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-white text-red-700 border border-red-700 font-mono"
+            title="Export format"
+          >
+            Format: {exportFormat.toUpperCase()}
+          </button>
+          <div className="mt-2 w-[180px] border border-red-700 bg-white">
+            {(['webp','jpeg','png'] as const).map(fmt => (
+              <div
+                key={fmt}
+                onClick={() => setExportFormat(fmt)}
+                className="px-4 py-2 hover:bg-red-100 cursor-pointer"
+              >
+                {fmt.toUpperCase()}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Quality (lossy only) */}
+        {(exportFormat === 'jpeg' || exportFormat === 'webp') && (
+          <label className="flex flex-col items-center">
+            Quality
+            <input
+              type="range"
+              min="0.5"
+              max="1"
+              step="0.01"
+              value={exportQuality}
+              onChange={(e) => setExportQuality(parseFloat(e.target.value))}
+            />
+          </label>
+        )}
+
+        {/* Hi-DPI toggle */}
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={hiDpi}
+            onChange={(e) => setHiDpi(e.target.checked)}
+          />
+          Hi-DPI (slower)
+        </label>
       </div>
 
       <div className="flex flex-col items-center gap-2 mt-4">

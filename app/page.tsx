@@ -13,14 +13,30 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
+// ---------- typed navigator helpers (no `any`) ----------
+type ShareDataWithFiles = ShareData & { files?: File[] }
+type ShareNavigator = Navigator & {
+  canShare?: (data?: ShareDataWithFiles) => boolean
+  share?: (data: ShareDataWithFiles) => Promise<void>
+}
+
+function hasFileShare(nav: Navigator, probe?: File): nav is ShareNavigator {
+  const n = nav as ShareNavigator
+  try {
+    return !!n.canShare && n.canShare(probe ? { files: [probe] } : undefined)
+  } catch {
+    return false
+  }
+}
+
 // ---------- helper: share to mobile Photos via native share sheet or fallbacks ----------
 async function shareOrSave(blob: Blob) {
   const file = new File([blob], 'blended-image.png', { type: 'image/png' })
-  const nav = navigator as any
+  const nav = navigator as ShareNavigator
 
   // Try native share sheet with file
   try {
-    if (nav?.canShare && nav.canShare({ files: [file] })) {
+    if (nav.canShare && nav.canShare({ files: [file] }) && nav.share) {
       await nav.share({
         files: [file],
         title: 'Blended Image',
@@ -56,19 +72,20 @@ export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [photo, setPhoto] = useState<HTMLImageElement | null>(null)
   const [textureSrc, setTextureSrc] = useState('magazine.jpg')
-  const [blendMode, setBlendMode] = useState('overlay')
+  const [blendMode, setBlendMode] = useState<GlobalCompositeOperation>('overlay')
   const [opacity, setOpacity] = useState(100)
   const [brightness, setBrightness] = useState(100)
   const [contrast, setContrast] = useState(100)
   const [saturation, setSaturation] = useState(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
-  // 🔒 SSR-stable initial label; update after mount to avoid hydration mismatch
+  // SSR-stable label; update after mount to avoid hydration mismatch
   const [canNativeShare, setCanNativeShare] = useState(false)
 
   useEffect(() => {
-    const nav = navigator as any
-    setCanNativeShare(!!(nav?.canShare && nav.canShare({ files: [new File([], 'x', { type: 'image/png' })] })))
+    // Probe file is required by some browsers to validate canShare({ files })
+    const probe = new File([], 'probe.png', { type: 'image/png' })
+    setCanNativeShare(hasFileShare(navigator, probe))
   }, [])
 
   const textureOptions = [
@@ -80,7 +97,7 @@ export default function Home() {
     'heavy-grain.png',
   ]
 
-  const blendOptions = [
+  const blendOptions: GlobalCompositeOperation[] = [
     'overlay',
     'multiply',
     'screen',
@@ -160,7 +177,7 @@ export default function Home() {
 
     // texture with chosen blend + opacity
     compCtx.globalAlpha = opacity / 100
-    compCtx.globalCompositeOperation = (blendMode as GlobalCompositeOperation) || 'overlay'
+    compCtx.globalCompositeOperation = blendMode
     compCtx.drawImage(texture, 0, 0, W, H)
     compCtx.restore()
 
@@ -191,6 +208,7 @@ export default function Home() {
   }
 
   const getFilterStyle = () => ({
+    // This drives the live preview; export now mirrors this order
     filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
   })
 
@@ -233,7 +251,7 @@ export default function Home() {
                   <div
                     key={opt}
                     onClick={() => {
-                      setter(opt)
+                      setter(opt as any) // sets string or GlobalCompositeOperation; see mapping below
                       setDropdownOpen(null)
                     }}
                     className="px-4 py-2 hover:bg-red-100 cursor-pointer"
@@ -271,6 +289,7 @@ export default function Home() {
               className="w-auto h-auto max-w-full max-h-[75vh]"
               style={{ imageRendering: 'auto', display: 'block' }}
             />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               key={textureSrc}
               src={`/textures/${textureSrc}`}

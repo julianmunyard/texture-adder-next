@@ -13,6 +13,37 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   })
 }
 
+// Convert a canvas to an <img> so Safari applies ctx.filter correctly
+async function canvasToImage(canvas: HTMLCanvasElement): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    // Prefer toBlob for memory; fall back to dataURL if needed
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        try {
+          const img = new Image()
+          img.onload = () => resolve(img)
+          img.onerror = reject
+          img.src = canvas.toDataURL('image/png')
+        } catch (e) {
+          reject(e)
+        }
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      const img = new Image()
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        resolve(img)
+      }
+      img.onerror = (e) => {
+        URL.revokeObjectURL(url)
+        reject(e)
+      }
+      img.src = url
+    }, 'image/png')
+  })
+}
+
 // ---------- typed navigator helpers ----------
 type ShareDataWithFiles = ShareData & { files?: File[] }
 type ShareNavigator = Navigator & {
@@ -84,6 +115,7 @@ export default function Home() {
   const [progress, setProgress] = useState(0)
   const [progressLabel, setProgressLabel] = useState('')
 
+  // Draw uploaded photo to preview canvas
   useEffect(() => {
     if (!photo || !canvasRef.current) return
     const canvas = canvasRef.current
@@ -97,6 +129,7 @@ export default function Home() {
     ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
   }, [photo])
 
+  // Slider track fill
   useEffect(() => {
     const sliders = document.querySelectorAll('input[type="range"]')
     sliders.forEach(slider => {
@@ -126,93 +159,97 @@ export default function Home() {
     reader.readAsDataURL(file)
   }
 
-  // ---------- export: blend first, then filters; show progress while preparing ----------
-const handleDownload = async () => {
-  if (!photo) return;
-  setExporting(true);
-  setProgress(5);
-  setProgressLabel('Decoding…');
+  // ---------- export: BLEND first, then FILTER the composite via <img> (mobile-safe) ----------
+  const handleDownload = async () => {
+    if (!photo) return
+    setExporting(true)
+    setProgress(5)
+    setProgressLabel('Decoding…')
 
-  try {
-    const texture = await loadImage(`/textures/${textureSrc}`);
-    const W = photo.width;
-    const H = photo.height;
+    try {
+      const texture = await loadImage(`/textures/${textureSrc}`)
+      const W = photo.width
+      const H = photo.height
 
-    setProgress(25);
-    setProgressLabel('Blending…');
+      setProgress(25)
+      setProgressLabel('Blending…')
 
-    // Pass 1: BLEND ONLY (no filters)
-    const compCanvas = document.createElement('canvas');
-    compCanvas.width = W;
-    compCanvas.height = H;
-    const compCtx = compCanvas.getContext('2d');
-    if (!compCtx) throw new Error('No 2D context');
+      // Pass 1: blend onto an offscreen canvas (no filters)
+      const compCanvas = document.createElement('canvas')
+      compCanvas.width = W
+      compCanvas.height = H
+      const compCtx = compCanvas.getContext('2d')
+      if (!compCtx) throw new Error('No 2D context')
 
-    compCtx.clearRect(0, 0, W, H);
-    compCtx.globalCompositeOperation = 'source-over';
-    compCtx.globalAlpha = 1;
-    compCtx.drawImage(photo, 0, 0, W, H);
+      compCtx.clearRect(0, 0, W, H)
+      compCtx.globalCompositeOperation = 'source-over'
+      compCtx.globalAlpha = 1
+      compCtx.drawImage(photo, 0, 0, W, H)
 
-    compCtx.globalAlpha = opacity / 100;
-    compCtx.globalCompositeOperation = blendMode;
-    compCtx.drawImage(texture, 0, 0, W, H);
+      compCtx.globalAlpha = opacity / 100
+      compCtx.globalCompositeOperation = blendMode
+      compCtx.drawImage(texture, 0, 0, W, H)
 
-    setProgress(55);
-    setProgressLabel('Applying filters…');
+      setProgress(55)
+      setProgressLabel('Preparing filter…')
 
-    // Pass 2: FILTER the composite (matches preview order)
-    const outCanvas = document.createElement('canvas');
-    outCanvas.width = W;
-    outCanvas.height = H;
-    const outCtx = outCanvas.getContext('2d');
-    if (!outCtx) throw new Error('No 2D context');
+      // Convert blended canvas -> <img> so Safari applies ctx.filter reliably
+      const blendedImg = await canvasToImage(compCanvas)
 
-    const fBrightness = Math.max(0, brightness) / 100;
-    const fContrast = Math.max(0, contrast) / 100;
-    const fSaturation = Math.max(0, saturation) / 100;
-    outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`;
+      setProgress(70)
+      setProgressLabel('Applying filters…')
 
-    // Use ImageBitmap to avoid Safari filter issues when the source is a canvas
-    if ('createImageBitmap' in window) {
-      const bmp = await createImageBitmap(compCanvas);
-      outCtx.drawImage(bmp, 0, 0);
-    } else {
-      // Fallback
-      outCtx.drawImage(compCanvas, 0, 0);
+      // Pass 2: filter the composite image
+      const outCanvas = document.createElement('canvas')
+      outCanvas.width = W
+      outCanvas.height = H
+      const outCtx = outCanvas.getContext('2d')
+      if (!outCtx) throw new Error('No 2D context')
+
+      const fBrightness = Math.max(0, brightness) / 100
+      const fContrast = Math.max(0, contrast) / 100
+      const fSaturation = Math.max(0, saturation) / 100
+      outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`
+      outCtx.drawImage(blendedImg, 0, 0, W, H)
+
+      // (optional) reset for safety
+      outCtx.filter = 'none'
+      outCtx.globalAlpha = 1
+      outCtx.globalCompositeOperation = 'source-over'
+
+      setProgress(88)
+      setProgressLabel('Encoding…')
+
+      await new Promise<void>((resolve) => {
+        outCanvas.toBlob(async (blob) => {
+          if (!blob) return resolve()
+          setProgress(95)
+          setProgressLabel('Opening share…')
+          await shareOrSave(blob, 'blended-image.png')
+          resolve()
+        }, 'image/png')
+      })
+
+      setProgress(100)
+      setProgressLabel('Done')
+    } catch (e) {
+      console.error(e)
+      setProgressLabel('Failed')
+    } finally {
+      setTimeout(() => {
+        setExporting(false)
+        setProgress(0)
+        setProgressLabel('')
+      }, 600)
     }
-
-    setProgress(85);
-    setProgressLabel('Encoding…');
-
-    await new Promise<void>((resolve) => {
-      outCanvas.toBlob(async (blob) => {
-        if (!blob) return resolve();
-        setProgress(95);
-        setProgressLabel('Opening share…');
-        await shareOrSave(blob, 'blended-image.png');
-        resolve();
-      }, 'image/png');
-    });
-
-    setProgress(100);
-    setProgressLabel('Done');
-  } catch (e) {
-    console.error(e);
-    setProgressLabel('Failed');
-  } finally {
-    setTimeout(() => {
-      setExporting(false);
-      setProgress(0);
-      setProgressLabel('');
-    }, 600);
   }
-};
 
   const toggleDropdown = (type: 'texture' | 'blend') => {
     setDropdownOpen(dropdownOpen === type ? null : type)
   }
 
   const getFilterStyle = () => ({
+    // Preview applies filter AFTER blending (wrapper), export now matches this order
     filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
   })
 

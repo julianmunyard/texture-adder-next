@@ -72,36 +72,30 @@ export default function Home() {
   const [saturation, setSaturation] = useState<number>(100)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
-  // Export knobs to speed up big images
-  const [exportPreset, setExportPreset] = useState<'original' | '4k' | '2k' | '1080p'>('2k')
-  const [exportFormat, setExportFormat] = useState<'png' | 'jpeg' | 'webp'>('webp')
-  const [exportQuality, setExportQuality] = useState<number>(0.92) // for jpeg/webp
-  const [hiDpi, setHiDpi] = useState<boolean>(false) // off by default for speed
-
-  // SSR-stable label; update after mount to avoid hydration mismatch
+  // Hydration-safe label toggle for native share
   const [canNativeShare, setCanNativeShare] = useState(false)
   useEffect(() => {
     const probe = new File([], 'probe.png', { type: 'image/png' })
     setCanNativeShare(hasFileShare(navigator, probe))
   }, [])
 
-  const textureOptions: string[] = [
-    'magazine.jpg',
-    'vinyl-bleed.jpg',
-    '60s-mustard.jpg',
-    'royal-navy.jpg',
-    'tonor.png',
-    'heavy-grain.png',
-  ]
+  // Export progress UI
+  const [exporting, setExporting] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [progressLabel, setProgressLabel] = useState('')
 
-  const blendOptions: GlobalCompositeOperation[] = [
-    'overlay',
-    'multiply',
-    'screen',
-    'darken',
-    'lighten',
-    'difference',
-  ]
+  useEffect(() => {
+    if (!photo || !canvasRef.current) return
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    canvas.width = photo.width
+    canvas.height = photo.height
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
+  }, [photo])
 
   useEffect(() => {
     const sliders = document.querySelectorAll('input[type="range"]')
@@ -120,19 +114,6 @@ export default function Home() {
     })
   }, [])
 
-  useEffect(() => {
-    if (!photo || !canvasRef.current) return
-    const canvas = canvasRef.current
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    canvas.width = photo.width
-    canvas.height = photo.height
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(photo, 0, 0, canvas.width, canvas.height)
-  }, [photo])
-
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -145,97 +126,88 @@ export default function Home() {
     reader.readAsDataURL(file)
   }
 
-  function maxDimForPreset(preset: typeof exportPreset): number | null {
-    switch (preset) {
-      case '4k': return 3840
-      case '2k': return 2560
-      case '1080p': return 1920
-      default: return null // original
-    }
-  }
-
-  // ---------- export: downscale + optional HiDPI + faster decoding via ImageBitmap ----------
+  // ---------- export: blend first, then filters; show progress while preparing ----------
   const handleDownload = async () => {
     if (!photo) return
+    setExporting(true)
+    setProgress(5)
+    setProgressLabel('Decoding…')
 
-    // Decode texture and upgrade both images to ImageBitmap for faster draw
-    const textureImg = await loadImage(`/textures/${textureSrc}`)
-    const [photoBmp, textureBmp] = await Promise.all([
-      createImageBitmap(photo),
-      createImageBitmap(textureImg),
-    ])
+    try {
+      // Step 1: load texture
+      const texture = await loadImage(`/textures/${textureSrc}`)
+      setProgress(20)
+      setProgressLabel('Compositing…')
 
-    const srcW = photoBmp.width
-    const srcH = photoBmp.height
-    const maxDim = maxDimForPreset(exportPreset)
-    const scale =
-      maxDim ? Math.min(1, maxDim / Math.max(srcW, srcH)) : 1
+      // Offscreen composite (no filters yet)
+      const dpr = 1; // keep exports quick & predictable
+      const W = photo.width
+      const H = photo.height
 
-    const targetW = Math.max(1, Math.round(srcW * scale))
-    const targetH = Math.max(1, Math.round(srcH * scale))
-    const dpr = hiDpi ? (window.devicePixelRatio || 1) : 1
+      const compCanvas = document.createElement('canvas')
+      compCanvas.width = Math.round(W * dpr)
+      compCanvas.height = Math.round(H * dpr)
+      const compCtx = compCanvas.getContext('2d')
+      if (!compCtx) throw new Error('No 2D context')
 
-    // Pass 1: composite (no filters yet)
-    const compCanvas = document.createElement('canvas')
-    compCanvas.width = Math.round(targetW * dpr)
-    compCanvas.height = Math.round(targetH * dpr)
-    const compCtx = compCanvas.getContext('2d')
-    if (!compCtx) return
-    compCtx.imageSmoothingEnabled = true
-    compCtx.imageSmoothingQuality = 'high'
+      compCtx.save()
+      compCtx.scale(dpr, dpr)
+      compCtx.clearRect(0, 0, W, H)
 
-    compCtx.save()
-    compCtx.scale(dpr, dpr)
-    compCtx.clearRect(0, 0, targetW, targetH)
+      // base photo
+      compCtx.globalCompositeOperation = 'source-over'
+      compCtx.globalAlpha = 1
+      compCtx.drawImage(photo, 0, 0, W, H)
 
-    // base photo
-    compCtx.globalCompositeOperation = 'source-over'
-    compCtx.globalAlpha = 1
-    compCtx.drawImage(photoBmp, 0, 0, targetW, targetH)
+      // texture with chosen blend + opacity
+      compCtx.globalAlpha = opacity / 100
+      compCtx.globalCompositeOperation = blendMode
+      compCtx.drawImage(texture, 0, 0, W, H)
+      compCtx.restore()
 
-    // texture with chosen blend + opacity
-    compCtx.globalAlpha = opacity / 100
-    compCtx.globalCompositeOperation = blendMode
-    compCtx.drawImage(textureBmp, 0, 0, targetW, targetH)
-    compCtx.restore()
+      setProgress(55)
+      setProgressLabel('Applying filters…')
 
-    // Pass 2: apply filters to merged result (matches preview)
-    const outCanvas = document.createElement('canvas')
-    outCanvas.width = compCanvas.width
-    outCanvas.height = compCanvas.height
-    const outCtx = outCanvas.getContext('2d')
-    if (!outCtx) return
-    outCtx.imageSmoothingEnabled = true
-    outCtx.imageSmoothingQuality = 'high'
+      // Step 2: apply filters to merged result (matches on-screen CSS)
+      const outCanvas = document.createElement('canvas')
+      outCanvas.width = compCanvas.width
+      outCanvas.height = compCanvas.height
+      const outCtx = outCanvas.getContext('2d')
+      if (!outCtx) throw new Error('No 2D context')
 
-    const fBrightness = Math.max(0, brightness) / 100
-    const fContrast = Math.max(0, contrast) / 100
-    const fSaturation = Math.max(0, saturation) / 100
-    outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`
-    outCtx.drawImage(compCanvas, 0, 0)
+      const fBrightness = Math.max(0, brightness) / 100
+      const fContrast = Math.max(0, contrast) / 100
+      const fSaturation = Math.max(0, saturation) / 100
+      outCtx.filter = `brightness(${fBrightness}) contrast(${fContrast}) saturate(${fSaturation})`
+      outCtx.drawImage(compCanvas, 0, 0)
 
-    const mime = exportFormat === 'png'
-      ? 'image/png'
-      : exportFormat === 'jpeg'
-      ? 'image/jpeg'
-      : 'image/webp'
+      setProgress(80)
+      setProgressLabel('Encoding…')
 
-    const filename =
-      exportFormat === 'png' ? 'blended-image.png'
-      : exportFormat === 'jpeg' ? 'blended-image.jpg'
-      : 'blended-image.webp'
+      // Step 3: encode → share/save
+      await new Promise<void>((resolve) => {
+        outCanvas.toBlob(async (blob) => {
+          if (!blob) return resolve()
+          setProgress(92)
+          setProgressLabel('Opening share…')
+          await shareOrSave(blob, 'blended-image.png')
+          resolve()
+        }, 'image/png')
+      })
 
-    await new Promise<void>((resolve) => {
-      // quality only applies to lossy formats
-      const quality = exportFormat === 'png' ? undefined : exportQuality
-      outCanvas.toBlob(async (blob) => {
-        if (!blob) return resolve()
-        // Ensure blob has desired type (some browsers ignore mime in toBlob when filter is active)
-        const fixedBlob = blob.type === mime ? blob : new Blob([blob], { type: mime })
-        await shareOrSave(fixedBlob, filename)
-        resolve()
-      }, mime, quality)
-    })
+      setProgress(100)
+      setProgressLabel('Done')
+    } catch (err) {
+      console.error(err)
+      setProgressLabel('Failed')
+    } finally {
+      // Let users see 100% briefly before hiding
+      setTimeout(() => {
+        setExporting(false)
+        setProgress(0)
+        setProgressLabel('')
+      }, 600)
+    }
   }
 
   const toggleDropdown = (type: 'texture' | 'blend') => {
@@ -267,7 +239,7 @@ export default function Home() {
         </label>
         <input type="file" id="upload" accept="image/*" onChange={handleUpload} className="hidden" />
 
-        {/* --- Texture dropdown (string) --- */}
+        {/* Texture dropdown */}
         <div className="relative">
           <button
             onClick={() => toggleDropdown('texture')}
@@ -278,13 +250,10 @@ export default function Home() {
           </button>
           {dropdownOpen === 'texture' && (
             <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
-              {textureOptions.map((opt) => (
+              {['magazine.jpg','vinyl-bleed.jpg','60s-mustard.jpg','royal-navy.jpg','tonor.png','heavy-grain.png'].map((opt) => (
                 <div
                   key={opt}
-                  onClick={() => {
-                    setTextureSrc(opt)
-                    setDropdownOpen(null)
-                  }}
+                  onClick={() => { setTextureSrc(opt); setDropdownOpen(null) }}
                   className="px-4 py-2 hover:bg-red-100 cursor-pointer"
                 >
                   {opt.split('.')[0]}
@@ -294,7 +263,7 @@ export default function Home() {
           )}
         </div>
 
-        {/* --- Blend dropdown (GlobalCompositeOperation) --- */}
+        {/* Blend dropdown */}
         <div className="relative">
           <button
             onClick={() => toggleDropdown('blend')}
@@ -305,13 +274,10 @@ export default function Home() {
           </button>
           {dropdownOpen === 'blend' && (
             <div className="absolute top-[44px] left-0 w-[180px] z-50 border border-red-700 text-red-700 font-mono rounded shadow-lg bg-white">
-              {blendOptions.map((opt) => (
+              {(['overlay','multiply','screen','darken','lighten','difference'] as GlobalCompositeOperation[]).map((opt) => (
                 <div
                   key={opt}
-                  onClick={() => {
-                    setBlendMode(opt)
-                    setDropdownOpen(null)
-                  }}
+                  onClick={() => { setBlendMode(opt); setDropdownOpen(null) }}
                   className="px-4 py-2 hover:bg-red-100 cursor-pointer"
                 >
                   {opt}
@@ -322,78 +288,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Export controls */}
-      <div className="flex flex-wrap gap-3 items-center justify-center">
-        {/* Size preset */}
-        <div className="relative">
-          <button
-            onClick={() => {}}
-            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-white text-red-700 border border-red-700 font-mono"
-            title="Export size preset"
-          >
-            Size: {exportPreset.toUpperCase()}
-          </button>
-          <div className="mt-2 w-[180px] border border-red-700 bg-white">
-            {(['original','4k','2k','1080p'] as const).map(p => (
-              <div
-                key={p}
-                onClick={() => setExportPreset(p)}
-                className="px-4 py-2 hover:bg-red-100 cursor-pointer"
-              >
-                {p === 'original' ? 'Original' : p.toUpperCase()}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Format */}
-        <div className="relative">
-          <button
-            onClick={() => {}}
-            className="w-[180px] h-[40px] px-4 flex items-center justify-between bg-white text-red-700 border border-red-700 font-mono"
-            title="Export format"
-          >
-            Format: {exportFormat.toUpperCase()}
-          </button>
-          <div className="mt-2 w-[180px] border border-red-700 bg-white">
-            {(['webp','jpeg','png'] as const).map(fmt => (
-              <div
-                key={fmt}
-                onClick={() => setExportFormat(fmt)}
-                className="px-4 py-2 hover:bg-red-100 cursor-pointer"
-              >
-                {fmt.toUpperCase()}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Quality (lossy only) */}
-        {(exportFormat === 'jpeg' || exportFormat === 'webp') && (
-          <label className="flex flex-col items-center">
-            Quality
-            <input
-              type="range"
-              min="0.5"
-              max="1"
-              step="0.01"
-              value={exportQuality}
-              onChange={(e) => setExportQuality(parseFloat(e.target.value))}
-            />
-          </label>
-        )}
-
-        {/* Hi-DPI toggle */}
-        <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            checked={hiDpi}
-            onChange={(e) => setHiDpi(e.target.checked)}
-          />
-          Hi-DPI (slower)
-        </label>
-      </div>
-
+      {/* Sliders */}
       <div className="flex flex-col items-center gap-2 mt-4">
         {[
           { label: 'Opacity', value: opacity, setter: setOpacity, max: 100 },
@@ -410,6 +305,7 @@ export default function Home() {
         ))}
       </div>
 
+      {/* Preview */}
       {photo && (
         <div className="mt-4 p-3 border border-neutral-700 bg-neutral-900 inline-block shadow-lg">
           <div className="relative" style={getFilterStyle()}>
@@ -435,18 +331,47 @@ export default function Home() {
               }}
               alt="Texture overlay"
             />
+
+            {/* Export progress overlay */}
+            {exporting && (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center"
+                style={{ background: 'rgba(0,0,0,0.45)' }}
+              >
+                <div style={{ color: 'white', marginBottom: 12, fontWeight: 600 }}>
+                  {progressLabel || 'Preparing…'}
+                </div>
+                <div style={{ width: 260, height: 8, background: 'rgba(255,255,255,0.25)', borderRadius: 999 }}>
+                  <div
+                    style={{
+                      width: `${progress}%`,
+                      height: '100%',
+                      background: 'white',
+                      borderRadius: 999,
+                      transition: 'width 200ms ease',
+                    }}
+                  />
+                </div>
+                <div style={{ color: 'white', marginTop: 8, fontSize: 12 }}>{Math.round(progress)}%</div>
+              </div>
+            )}
           </div>
         </div>
       )}
 
+      {/* Download / Share */}
       <div className="wave-fade" style={{ animationDelay: '0.8s' }}>
         <button
-          onClick={handleDownload}
-          className="mt-4 px-4 py-2 w-[180px] text-center border border-red-600 bg-red-600 hover:bg-red-700 text-white"
+          onClick={exporting ? undefined : handleDownload}
+          disabled={exporting || !photo}
+          className="mt-4 px-4 py-2 w-[180px] text-center border border-red-600 bg-red-600 hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed text-white"
         >
           {canNativeShare ? 'Share / Save Image' : 'Download Image'}
         </button>
       </div>
+
+      {/* Hidden input at the end to avoid layout shift on first mount */}
+      <input type="hidden" value={canNativeShare ? '1' : '0'} readOnly />
     </main>
   )
 }

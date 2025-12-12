@@ -30,6 +30,116 @@ function hasFileShare(nav: Navigator, probe?: File): nav is ShareNavigator {
   }
 }
 
+// ---------- helper: apply gaussian blur to canvas ----------
+function applyGaussianBlur(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, radius: number) {
+  if (radius <= 0) return
+  
+  // Use canvas filter if available (modern browsers)
+  if (ctx.filter !== undefined) {
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = canvas.width
+    tempCanvas.height = canvas.height
+    const tempCtx = tempCanvas.getContext('2d')
+    if (!tempCtx) return
+    
+    tempCtx.filter = `blur(${radius}px)`
+    tempCtx.drawImage(canvas, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(tempCanvas, 0, 0)
+    return
+  }
+  
+  // Fallback: simple box blur approximation
+  const iterations = Math.ceil(radius / 2)
+  for (let i = 0; i < iterations; i++) {
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+    const data = imageData.data
+    const tempData = new Uint8ClampedArray(data)
+    const kernelSize = 3
+    
+    for (let y = 1; y < canvas.height - 1; y++) {
+      for (let x = 1; x < canvas.width - 1; x++) {
+        let r = 0, g = 0, b = 0, a = 0, count = 0
+        
+        for (let ky = -1; ky <= 1; ky++) {
+          for (let kx = -1; kx <= 1; kx++) {
+            const idx = ((y + ky) * canvas.width + (x + kx)) * 4
+            r += tempData[idx]
+            g += tempData[idx + 1]
+            b += tempData[idx + 2]
+            a += tempData[idx + 3]
+            count++
+          }
+        }
+        
+        const idx = (y * canvas.width + x) * 4
+        data[idx] = r / count
+        data[idx + 1] = g / count
+        data[idx + 2] = b / count
+        data[idx + 3] = a / count
+      }
+    }
+    
+    ctx.putImageData(imageData, 0, 0)
+  }
+}
+
+// ---------- helper: apply directional blur (motion blur) to canvas ----------
+// Based on shader approach: sample along direction and average
+function applyDirectionalBlur(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, distance: number) {
+  if (distance <= 0) return
+  
+  // Create source copy
+  const sourceCanvas = document.createElement('canvas')
+  sourceCanvas.width = canvas.width
+  sourceCanvas.height = canvas.height
+  const sourceCtx = sourceCanvas.getContext('2d')
+  if (!sourceCtx) return
+  sourceCtx.drawImage(canvas, 0, 0)
+  
+  const sourceData = sourceCtx.getImageData(0, 0, canvas.width, canvas.height)
+  const sourcePixels = sourceData.data
+  const outputData = ctx.createImageData(canvas.width, canvas.height)
+  const outputPixels = outputData.data
+  
+  // Calculate offset and samples (matching shader approach: uv - offset * i)
+  const maxDistance = Math.min(distance, 20)
+  const samples = Math.max(8, Math.min(20, Math.ceil(maxDistance)))
+  // Offset per step (similar to shader's offset *= Strength*0.005)
+  const offsetStep = maxDistance / samples
+  
+  // For each pixel, sample along horizontal direction
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      let r = 0, g = 0, b = 0, a = 0
+      let count = 0
+      
+      // Sample along horizontal line (motion blur direction)
+      // Shader does: uv - offset * i, so we sample backwards from current position
+      for (let i = 0; i < samples; i++) {
+        const offset = i * offsetStep
+        const sampleX = Math.max(0, Math.min(canvas.width - 1, Math.round(x - offset)))
+        const idx = (y * canvas.width + sampleX) * 4
+        
+        r += sourcePixels[idx]
+        g += sourcePixels[idx + 1]
+        b += sourcePixels[idx + 2]
+        a += sourcePixels[idx + 3]
+        count++
+      }
+      
+      // Average all samples (like shader's output /= Samples)
+      const outIdx = (y * canvas.width + x) * 4
+      outputPixels[outIdx] = Math.round(r / count)
+      outputPixels[outIdx + 1] = Math.round(g / count)
+      outputPixels[outIdx + 2] = Math.round(b / count)
+      outputPixels[outIdx + 3] = Math.round(a / count)
+    }
+  }
+  
+  ctx.putImageData(outputData, 0, 0)
+}
+
 // ---------- helper: share to mobile Photos via native share sheet or fallbacks ----------
 async function shareOrSave(blob: Blob, filename: string) {
   const file = new File([blob], filename, { type: blob.type })
@@ -71,6 +181,8 @@ export default function Home() {
   const [brightness, setBrightness] = useState<number>(100)
   const [contrast, setContrast] = useState<number>(100)
   const [saturation, setSaturation] = useState<number>(100)
+  const [gaussianBlur, setGaussianBlur] = useState<number>(0)
+  const [directionalBlur, setDirectionalBlur] = useState<number>(0)
   const [dropdownOpen, setDropdownOpen] = useState<'texture' | 'blend' | null>(null)
 
   // Hydration-safe label toggle for native share
@@ -211,6 +323,19 @@ const handleDownload = async () => {
     
     // Put the modified image data back
     outCtx.putImageData(imageData, 0, 0)
+    
+    // Apply blur effects
+    if (gaussianBlur > 0) {
+      setProgress(70)
+      setProgressLabel('Applying blur…')
+      applyGaussianBlur(outCtx, outCanvas, gaussianBlur / 2)
+    }
+    
+    if (directionalBlur > 0) {
+      setProgress(75)
+      setProgressLabel('Applying motion blur…')
+      applyDirectionalBlur(outCtx, outCanvas, directionalBlur)
+    }
 
     setProgress(88)
     setProgressLabel('Encoding…')
@@ -243,10 +368,15 @@ const handleDownload = async () => {
     setDropdownOpen(dropdownOpen === type ? null : type)
   }
 
-  const getFilterStyle = () => ({
-    // Preview applies filter AFTER blending (wrapper), export now matches this order
-    filter: `brightness(${brightness / 100}) contrast(${contrast / 100}) saturate(${saturation / 100})`
-  })
+  const getFilterStyle = () => {
+    const filters: string[] = []
+    if (brightness !== 100) filters.push(`brightness(${brightness / 100})`)
+    if (contrast !== 100) filters.push(`contrast(${contrast / 100})`)
+    if (saturation !== 100) filters.push(`saturate(${saturation / 100})`)
+    if (gaussianBlur > 0) filters.push(`blur(${gaussianBlur / 2}px)`)
+    // Directional blur is applied separately via canvas in preview
+    return { filter: filters.length > 0 ? filters.join(' ') : 'none' }
+  }
 
   return (
     <main className="min-h-screen bg-white text-red-700 flex flex-col items-center gap-6 p-4 font-mono">
@@ -324,12 +454,14 @@ const handleDownload = async () => {
           { label: 'Opacity', value: opacity, setter: setOpacity, max: 100 },
           { label: 'Brightness', value: brightness, setter: setBrightness, max: 200 },
           { label: 'Contrast', value: contrast, setter: setContrast, max: 200 },
-          { label: 'Saturation', value: saturation, setter: setSaturation, max: 200 }
-        ].map(({ label, value, setter, max }, i) => (
+          { label: 'Saturation', value: saturation, setter: setSaturation, max: 200 },
+          { label: 'Gaussian Blur', value: gaussianBlur, setter: setGaussianBlur, max: 100, step: 0.5 },
+          { label: 'Directional Blur', value: directionalBlur, setter: setDirectionalBlur, max: 50 }
+        ].map(({ label, value, setter, max, step }, i) => (
           <div key={label} className="wave-fade" style={{ animationDelay: `${0.4 + i * 0.1}s` }}>
             <label className="flex flex-col items-center">
               {label}
-              <input type="range" min="0" max={max} value={value} onChange={(e) => setter(+e.target.value)} />
+              <input type="range" min="0" max={max} step={step || 1} value={value} onChange={(e) => setter(+e.target.value)} />
             </label>
           </div>
         ))}
